@@ -178,6 +178,7 @@ void destroy_ipc_resources()
     msgctl(g_mq_id, IPC_RMID, NULL);
 }
 
+void send_ipc_message(Message *msg);
 void clean_exit()
 {
     // Kendi başlattığımız Attached Process'leri öldür ve bildir
@@ -209,10 +210,7 @@ void clean_exit()
                     // Mesaj gönderme (msgsnd)
                     if (g_mq_id != -1)
                     {
-                        if (msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0) == -1)
-                        {
-                            perror("Exit IPC msgsnd hatası");
-                        }
+                        send_ipc_message(&msg);
                     }
                 }
             }
@@ -238,7 +236,6 @@ void clean_exit()
     exit(0);
 }
 
-void send_ipc_message(Message *msg);
 void repaint_ui(const char *message);
 // Monitor Thread fonksiyonu
 void *monitor_processes(void *arg)
@@ -299,10 +296,7 @@ void *monitor_processes(void *arg)
                     msg.sender_pid = getpid();
                     msg.target_pid = proc->pid;
 
-                    if (msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0) == -1)
-                    {
-                        perror("Monitor IPC msgsnd hatası");
-                    }
+                    send_ipc_message(&msg);
 
                     // Shared Memory'den sil (Kaydırma Yöntemi)
                     g_shared_mem->processes[i] = g_shared_mem->processes[g_shared_mem->process_count - 1];
@@ -321,45 +315,43 @@ void *monitor_processes(void *arg)
 // IPC Mesajı Gönderme Fonksiyonu
 void send_ipc_message(Message *msg)
 {
-    if (msgsnd(g_mq_id, msg, sizeof(Message) - sizeof(long), 0) == -1)
+    // Sistemdeki toplam instance (terminal) sayısını al
+    int total_instances = g_shared_mem->instance_count;
+
+    // Kendim dahil tüm instance'lara mesaj gönder
+    for (int i = 0; i < total_instances; i++)
     {
-        perror("Mesaj gönderme hatası");
+        if (msgsnd(g_mq_id, msg, sizeof(Message) - sizeof(long), 0) == -1)
+        {
+            perror("Mesaj gönderme hatası");
+        }
     }
 }
-
 // IPC Listener fonksiyonu
 void *ipc_listener(void *arg)
 {
-    (void)arg; // Makefile unused parameter warning go away
     Message msg;
     char buffer[256];
     while (1)
     {
+        // Mesajı bekle
         if (msgrcv(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0, 0) == -1)
         {
             if (errno == EIDRM || errno == EINVAL)
-            {
-                break; // Hata basma, döngüyü kır ve sessizce çık.
-            }
+                break;
             perror("Mesaj alma hatası");
             continue;
         }
 
+        // Kendi mesajım geldiyse yut
         if (msg.sender_pid == getpid())
         {
-            // Mesajı ben gönderdim ama yanlışlıkla ben okudum (Kuyruktan silindi).
-            // Eğer sistemde benden başka instance varsa, mesajı onlar için GERİ KOYMALIYIM.
-
-            // Shared memory'den aktif instance sayısına bak
-            // (Eğer sadece ben varsam geri koymaya gerek yok, çöpe atabilirim)
-            if (g_shared_mem->instance_count > 1)
-            {
-                msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0);
-                usleep(10000); // 10ms bekle ki diğer terminalin alma şansı olsun
-            }
+            // Diğer terminallerin mesajı kapabilmesi için sıramı savıyorum.
+            usleep(50000); // 50ms bekle
             continue;
         }
 
+        // Başkasından gelen mesajı işle
         if (msg.command == STATUS_TERMINATED)
         {
             snprintf(buffer, sizeof(buffer), "[IPC] Process sonlandırıldı: PID %d", msg.target_pid);
@@ -368,8 +360,14 @@ void *ipc_listener(void *arg)
         {
             snprintf(buffer, sizeof(buffer), "[IPC] Yeni process başlatıldı: PID %d", msg.target_pid);
         }
-        // Ekranı komple yenile
+
+        // Ekrana bas
         repaint_ui(buffer);
+
+        // Açgözlülük Önleme:
+        // Mesajı aldım, işimi bitirdim. Kuyrukta başka kopya varsa
+        // onları diğer terminaller alsın diye biraz bekliyorum.
+        usleep(50000); // 50ms bekle
     }
     return NULL;
 }
