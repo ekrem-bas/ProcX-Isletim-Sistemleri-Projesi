@@ -167,6 +167,55 @@ void cleanup_ipc_resources()
     }
 }
 
+// Monitor Thread fonksiyonu
+void *monitor_processes(void *arg)
+{
+    while (1)
+    {
+        sleep(2);        // 2 saniyede bir kontrol et
+        sem_wait(g_sem); // Kritik bölge başlangıcı
+        for (int i = 0; i < g_shared_mem->process_count; i++)
+        {
+            ProcessInfo *proc = &g_shared_mem->processes[i];
+            if (proc->is_active && proc->status == STATUS_RUNNING)
+            {
+                // Process'in durumunu kontrol et
+                pid_t result = waitpid(proc->pid, NULL, WNOHANG);
+                if (result == -1)
+                {
+                    perror("waitpid hatası");
+                }
+                else if (result > 0) // Process sonlanmış
+                {
+                    // Process'i shared memory'den kaldır
+                    g_shared_mem->processes[i] = g_shared_mem->processes[g_shared_mem->process_count - 1];
+                    g_shared_mem->process_count--;
+                    printf("[MONITOR] Process %d sonlandı.\n", proc->pid);
+                    // IPC ile diğer instance'lara bildirim gönder
+                    Message msg;
+                    msg.msg_type = 1; // Tüm instance'lara gönder
+                    msg.command = STATUS_TERMINATED;
+                    msg.sender_pid = getpid();
+                    msg.target_pid = proc->pid;
+                    send_ipc_message(&msg);
+                    i--; // İndeksi geri al çünkü eleman kaydırıldı
+                }
+            }
+        }
+        sem_post(g_sem); // Kritik bölge sonu
+    }
+    return NULL;
+}
+
+// IPC Mesajı Gönderme Fonksiyonu
+void send_ipc_message(Message *msg)
+{
+    if (msgsnd(g_mq_id, msg, sizeof(Message) - sizeof(long), 0) == -1)
+    {
+        perror("Mesaj gönderme hatası");
+    }
+}
+
 void print_program_output()
 {
     printf("==============================\n");
