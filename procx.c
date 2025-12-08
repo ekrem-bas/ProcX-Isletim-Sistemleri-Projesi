@@ -41,6 +41,7 @@ typedef struct
 {
     ProcessInfo processes[50]; // Maksimum 50 process
     int process_count;         // Aktif process sayısı
+    int instance_count;        // Aktif ProcX instance sayısı
 } SharedData;
 
 typedef struct
@@ -130,42 +131,65 @@ void init_ipc_resources()
         perror("Message queue oluşturma hatası");
         exit(1);
     }
+
+    sem_wait(g_sem);
+    // Instance sayısını artır
+    g_shared_mem->instance_count++;
+    sem_post(g_sem);
 }
 
-// IPC Kaynaklarını temizleme fonksiyonu
-void cleanup_ipc_resources()
+void disconnect_ipc_resources()
 {
-    // Semaforu kapat
+    if (g_sem != NULL)
+    {
+        munmap(g_sem, sizeof(SharedData));
+    }
     if (g_sem != NULL)
     {
         sem_close(g_sem);
-        sem_unlink(SEM_NAME);
-        if (g_sem == SEM_FAILED)
-        {
-            perror("Semafor kapatma hatası");
-        }
     }
+}
 
-    // Shared memory'yi kapat
-    if (g_shared_mem != NULL)
-    {
-        munmap(g_shared_mem, sizeof(SharedData));
-        shm_unlink(SHM_NAME);
-        if (g_shared_mem == MAP_FAILED)
-        {
-            perror("Shared memory kapatma hatası");
-        }
-    }
+void destroy_ipc_resources()
+{
+    shm_unlink(SHM_NAME);
+    sem_unlink(SEM_NAME);
+    msgctl(g_mq_id, IPC_RMID, NULL);
+    printf("[SİSTEM] Tüm kaynaklar (SHM, SEM, MQ) silindi.\n");
+}
 
-    // Message queue'yu sil
-    if (g_mq_id != -1)
+void clean_exit()
+{
+    // Atached Processleri sonlandır
+    if (g_sem != NULL && g_shared_mem != NULL)
     {
-        msgctl(g_mq_id, IPC_RMID, NULL);
-        if (msgctl(g_mq_id, IPC_RMID, NULL) == -1)
+        sem_wait(g_sem);
+        for (int i = 0; i < g_shared_mem->process_count; i++)
         {
-            perror("Message queue silme hatası");
+            ProcessInfo *proc = &g_shared_mem->processes[i];
+            // Sadece BENİM başlattığım (owner_pid == getpid()) ve ATTACHED olanlar
+            if (proc->is_active && proc->owner_pid == getpid() && proc->mode == MODE_ATACHED)
+            {
+                kill(proc->pid, SIGTERM);
+                printf("[INFO] Attached process %d kapatıldı.\n", proc->pid);
+            }
         }
     }
+    // Instance sayısını azalt
+    g_shared_mem->instance_count--;
+    int remaining_instances = g_shared_mem->instance_count;
+    sem_post(g_sem);
+
+    // Eğer son instance isek, kaynakları temizle
+    if (remaining_instances <= 0)
+    {
+        destroy_ipc_resources();
+    }
+    else // Başkaları varsa sadece bağlantıyı kes
+    {
+        disconnect_ipc_resources();
+    }
+    exit(0);
 }
 
 // Monitor Thread fonksiyonu
@@ -396,8 +420,11 @@ void print_program_output()
 
 void print_running_processes(SharedData *data)
 {
+    printf("==============================\n");
     printf("Çalışan Programlar:\n");
+    printf("==============================\n");
     printf("PID\tKomut\tMod\tDurum\tBaşlangıç Zamanı\n");
+    printf("==============================\n");
     for (int i = 0; i < data->process_count; i++)
     {
         ProcessInfo *proc = &data->processes[i];
@@ -412,6 +439,7 @@ void print_running_processes(SharedData *data)
                 ctime(&proc->start_time));
         }
     }
+    printf("==============================\n");
 }
 
 int main(int argc, char const *argv[])
