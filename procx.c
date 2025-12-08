@@ -361,6 +361,27 @@ void create_new_process(char *command, ProcessMode mode)
            (mode == MODE_DETACHED ? "Detached" : "Attached"));
 }
 
+// Process'i sonlandırma fonksiyonu
+void terminate_process(pid_t target_pid)
+{
+    if (kill(target_pid, SIGTERM))
+    {
+        perror("Process sonlandırma hatası");
+    }
+    else
+    {
+        printf("[INFO] Process %d'e SIGTERM sinyali gönderildi.\n", target_pid);
+        // Shared Memory'den kaldırma işlemi monitor thread tarafından yapılacak
+        // IPC ile diğer instance'lara bildirim gönder
+        Message msg;
+        msg.msg_type = 1; // Tüm instance'lara gönder
+        msg.command = STATUS_TERMINATED;
+        msg.sender_pid = getpid();
+        msg.target_pid = target_pid;
+        send_ipc_message(&msg);
+    }
+}
+
 void print_program_output()
 {
     printf("==============================\n");
