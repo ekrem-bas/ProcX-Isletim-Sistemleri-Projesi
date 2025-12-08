@@ -21,7 +21,8 @@ typedef enum
 typedef enum
 {
     STATUS_RUNNING = 0,
-    STATUS_TERMINATED = 1
+    STATUS_TERMINATED = 1,
+    STATUS_CREATED = 2
 } ProcessStatus;
 
 // Veri Yapıları
@@ -213,6 +214,34 @@ void send_ipc_message(Message *msg)
     if (msgsnd(g_mq_id, msg, sizeof(Message) - sizeof(long), 0) == -1)
     {
         perror("Mesaj gönderme hatası");
+    }
+}
+
+// IPC Listener fonksiyonu
+void *ipc_listener(void *arg)
+{
+    Message msg;
+    while (1)
+    {
+        if (msgrcv(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0, 0) == -1)
+        {
+            perror("Mesaj alma hatası");
+            continue;
+        }
+
+        if (msg.sender_pid == getpid())
+        {
+            continue; // Kendi mesajımızı yoksay
+        }
+
+        if (msg.command == STATUS_TERMINATED)
+        {
+            printf("[IPC] Process sonlandırıldı: PID %d\n", msg.target_pid);
+        }
+        else if (msg.command == STATUS_CREATED)
+        {
+            printf("[IPC] Yeni process başlatıldı: PID %d\n", msg.target_pid);
+        }
     }
 }
 
