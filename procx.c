@@ -10,6 +10,9 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <time.h>
+#include <signal.h>
+#include <pthread.h>
+#include <sys/wait.h>
 
 // Enum
 typedef enum
@@ -54,7 +57,7 @@ typedef struct
 
 #define SHM_NAME "/procx_shm"
 #define SEM_NAME "/procx_sem"
-#define MSG_QUEUE_KEY "/procx_mq"
+#define IPC_KEY_FILE "/tmp/procx_ipc_key"
 // GLOBAL DEĞİŞKENLER
 SharedData *g_shared_mem = NULL; // Shared memory pointer'ı
 sem_t *g_sem = NULL;             // Semafor pointer'ı
@@ -66,15 +69,27 @@ void init_ipc_resources()
     int shm_fd;
     int is_first_instance = 0;
 
-    // 1. Shared Memory Oluşturma/Bağlanma
-    // O_EXCL flag'i ile "Sadece yoksa oluştur" diyoruz. Başarılı olursa ilk biziz.
+    /*
+    Shared Memory oluşturma/bağlanma
+    O_CREAT : Eğer yoksa oluştur
+    O_EXCL  : Eğer zaten varsa hata ver
+    O_RDWR  : Okuma/Yazma izni
+    0666    : İzinler (okuma/yazma herkes için)
+    */
     shm_fd = shm_open(SHM_NAME, O_CREAT | O_EXCL | O_RDWR, 0666);
 
-    if (shm_fd > 0)
+    // Shared memory oluştuysa >= 0 döner
+    if (shm_fd >= 0)
     {
         // Dosya yeni oluşturuldu, demek ki ilk instance biziz.
         is_first_instance = 1;
-        printf("[DEBUG] İlk instance başlatılıyor, shared memory oluşturuldu.\n");
+        // Boyut ayarla
+        if (ftruncate(shm_fd, sizeof(SharedData)) == -1)
+        {
+            perror("ftruncate hatası");
+            shm_unlink(SHM_NAME);
+            exit(1);
+        }
     }
     else
     {
@@ -82,7 +97,6 @@ void init_ipc_resources()
         {
             // Zaten var, normal aç
             shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
-            printf("[DEBUG] Var olan sisteme bağlanıldı.\n");
         }
         else
         {
@@ -91,14 +105,7 @@ void init_ipc_resources()
         }
     }
 
-    // Boyut ayarla
-    if (ftruncate(shm_fd, sizeof(SharedData)) == -1)
-    {
-        perror("ftruncate hatası");
-        exit(1);
-    }
-
-    // Memory Mapping (Pointer'ı global değişkene ata)
+    // Belleği ilgili pointer'a eşle
     g_shared_mem = (SharedData *)mmap(NULL, sizeof(SharedData),
                                       PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (g_shared_mem == MAP_FAILED)
@@ -107,15 +114,14 @@ void init_ipc_resources()
         exit(1);
     }
 
-    // Eğer ilk instance ise belleği SIFIRLA (Çöp verileri temizle)
+    // Eğer ilk instance ise belleği sıfırla
     if (is_first_instance)
     {
         memset(g_shared_mem, 0, sizeof(SharedData));
         g_shared_mem->process_count = 0;
     }
 
-    // 2. Semafor Oluşturma/Bağlanma
-    // Başlangıç değeri 1 (Mutex gibi çalışacak)
+    // Semafor oluşturma/bağlanma
     g_sem = sem_open(SEM_NAME, O_CREAT, 0666, 1);
     if (g_sem == SEM_FAILED)
     {
@@ -123,9 +129,24 @@ void init_ipc_resources()
         exit(1);
     }
 
-    // 3. Message Queue Oluşturma
-    // System V Message Queue kullanımı
-    key_t key = ftok(MSG_QUEUE_KEY, 65);
+    // Mesaj kuyruğu için IPC key dosyasını oluştur
+    int fd = open(IPC_KEY_FILE, O_CREAT | O_RDWR, 0666);
+    if (fd == -1)
+    {
+        perror("IPC Key dosyası oluşturulamadı");
+        exit(1);
+    }
+    close(fd);
+
+    // Key oluştur
+    key_t key = ftok(IPC_KEY_FILE, 65);
+    if (key == -1)
+    {
+        perror("ftok hatası");
+        exit(1);
+    }
+
+    // Mesaj kuyruğu oluşturma/baglanma
     if ((g_mq_id = msgget(key, 0666 | IPC_CREAT)) == -1)
     {
         perror("Message queue oluşturma hatası");
@@ -160,74 +181,124 @@ void destroy_ipc_resources()
 
 void clean_exit()
 {
-    // Atached Processleri sonlandır
+    // Kendi başlattığımız Attached Process'leri öldür ve bildir
     if (g_sem != NULL && g_shared_mem != NULL)
     {
         sem_wait(g_sem);
+
         for (int i = 0; i < g_shared_mem->process_count; i++)
         {
             ProcessInfo *proc = &g_shared_mem->processes[i];
-            // Sadece BENİM başlattığım (owner_pid == getpid()) ve ATTACHED olanlar
+
+            // Sadece attached ve kendi başlattıklarımızı öldür
             if (proc->is_active && proc->owner_pid == getpid() && proc->mode == MODE_ATACHED)
             {
-                kill(proc->pid, SIGTERM);
-                printf("[INFO] Attached process %d kapatıldı.\n", proc->pid);
+                // Processi kill et
+                if (kill(proc->pid, SIGTERM) == 0)
+                {
+                    // Shared Memory'de durumu güncelle
+                    proc->is_active = 0;
+                    proc->status = STATUS_TERMINATED;
+
+                    // Diğer Terminallere IPC Mesajı Gönder
+                    Message msg;
+                    msg.msg_type = 1;
+                    msg.command = STATUS_TERMINATED;
+                    msg.sender_pid = getpid();
+                    msg.target_pid = proc->pid;
+
+                    // Mesaj gönderme (msgsnd)
+                    if (g_mq_id != -1)
+                    {
+                        msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0);
+                    }
+                }
             }
         }
-    }
-    // Instance sayısını azalt
-    g_shared_mem->instance_count--;
-    int remaining_instances = g_shared_mem->instance_count;
-    sem_post(g_sem);
 
-    // Eğer son instance isek, kaynakları temizle
-    if (remaining_instances <= 0)
-    {
-        destroy_ipc_resources();
+        // Sayacı azalt ve sonuncu instance mıyım kontrol et
+        g_shared_mem->instance_count--;
+        int remaining_instances = g_shared_mem->instance_count;
+
+        sem_post(g_sem);
+
+        // IPC kaynaklarını temizleme işlemleri
+        if (remaining_instances <= 0)
+        {
+            destroy_ipc_resources(); // Sonuncusaysan her şeyi sil
+        }
+        else
+        {
+            disconnect_ipc_resources(); // Değilsen sadece bağlantını kes
+        }
     }
-    else // Başkaları varsa sadece bağlantıyı kes
-    {
-        disconnect_ipc_resources();
-    }
+
     exit(0);
 }
+
+void send_ipc_message(Message *msg);
 
 // Monitor Thread fonksiyonu
 void *monitor_processes(void *arg)
 {
-    while (1)
+    while (1) // Program çalıştığı sürece
     {
-        sleep(2);        // 2 saniyede bir kontrol et
-        sem_wait(g_sem); // Kritik bölge başlangıcı
+        sleep(2); // 2 saniye bekle
+
+        // Shared memory ve semafor hazır değilse atla
+        if (g_shared_mem == NULL || g_sem == NULL)
+            continue;
+
+        sem_wait(g_sem);
+
         for (int i = 0; i < g_shared_mem->process_count; i++)
         {
             ProcessInfo *proc = &g_shared_mem->processes[i];
-            if (proc->is_active && proc->status == STATUS_RUNNING)
+
+            // Eğer başkasının process'i ise atla
+            // Başkasının processini waitpid ile bekleyemeyiz
+            if (proc->owner_pid != getpid())
             {
-                // Process'in durumunu kontrol et
-                pid_t result = waitpid(proc->pid, NULL, WNOHANG);
-                if (result == -1)
+                continue;
+            }
+
+            // Sadece aktif olanları kontrol et
+            if (proc->is_active)
+            {
+                int status;
+                // WNOHANG: Process bitmediyse bekleme yapma, hemen dön (0 döner)
+                pid_t result = waitpid(proc->pid, &status, WNOHANG);
+
+                if (result > 0) // Process sonlandı
                 {
-                    perror("waitpid hatası");
-                }
-                else if (result > 0) // Process sonlanmış
-                {
-                    // Process'i shared memory'den kaldır
-                    g_shared_mem->processes[i] = g_shared_mem->processes[g_shared_mem->process_count - 1];
-                    g_shared_mem->process_count--;
-                    printf("[MONITOR] Process %d sonlandı.\n", proc->pid);
-                    // IPC ile diğer instance'lara bildirim gönder
+                    printf("[MONITOR] Process %d sonlandı (Temizleniyor...)\n", proc->pid);
+
+                    // 1. IPC Mesajı Gönder (Diğerlerine haber ver)
                     Message msg;
-                    msg.msg_type = 1; // Tüm instance'lara gönder
+                    msg.msg_type = 1;
                     msg.command = STATUS_TERMINATED;
                     msg.sender_pid = getpid();
                     msg.target_pid = proc->pid;
-                    send_ipc_message(&msg);
-                    i--; // İndeksi geri al çünkü eleman kaydırıldı
+
+                    if (msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0) == -1)
+                    {
+                        perror("Monitor msgsnd hatası");
+                    }
+
+                    // Shared Memory'den sil
+                    g_shared_mem->processes[i] = g_shared_mem->processes[g_shared_mem->process_count - 1];
+                    g_shared_mem->process_count--;
+
+                    // İndeksi düzelt
+                    i--;
+                }
+                else if (result == -1)
+                {
+                    perror("waitpid hatası");
                 }
             }
         }
-        sem_post(g_sem); // Kritik bölge sonu
+        sem_post(g_sem);
     }
     return NULL;
 }
@@ -255,7 +326,16 @@ void *ipc_listener(void *arg)
 
         if (msg.sender_pid == getpid())
         {
-            continue; // Kendi mesajımızı yoksay
+            // Mesajı ben gönderdim ama yanlışlıkla ben okudum (Kuyruktan silindi).
+            // Eğer sistemde benden başka instance varsa, mesajı onlar için GERİ KOYMALIYIM.
+
+            // Shared memory'den aktif instance sayısına bak
+            // (Eğer sadece ben varsam geri koymaya gerek yok, çöpe atabilirim)
+            if (g_shared_mem->instance_count > 1)
+            {
+                msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0);
+                usleep(10000); // 10ms bekle ki diğer terminalin alma şansı olsun
+            }
         }
 
         if (msg.command == STATUS_TERMINATED)
@@ -276,7 +356,6 @@ void *ipc_listener(void *arg)
 int parse_command(char *command, char *argv[])
 {
     int count = 0;
-    // strtok orijinal string'i değiştirdiği için, burada doğrudan komutun pointer'ını kullanırız.
     char *token = strtok(command, " \t\n"); // Boşluk ve tab karakterlerine göre ayır
 
     while (token != NULL && count < MAX_ARGS - 1)
@@ -349,7 +428,7 @@ void create_new_process(char *command, ProcessMode mode)
     int max_processes = sizeof(g_shared_mem->processes) / sizeof(g_shared_mem->processes[0]);
     if (g_shared_mem->process_count >= max_processes)
     {
-        fprintf(stderr, "HATA: Shared memory dolu (Maksimum %lu sürece ulaşıldı).\n", max_processes);
+        fprintf(stderr, "HATA: Shared memory dolu (Maksimum %d sürece ulaşıldı).\n", max_processes);
         sem_post(g_sem); // Kilidi aç
         return;
     }
@@ -388,21 +467,14 @@ void create_new_process(char *command, ProcessMode mode)
 // Process'i sonlandırma fonksiyonu
 void terminate_process(pid_t target_pid)
 {
-    if (kill(target_pid, SIGTERM))
+    // Sinyal gönder
+    if (kill(target_pid, SIGTERM) == 0)
     {
-        perror("Process sonlandırma hatası");
+        printf("[INFO] Process %d için sonlandırma emri (SIGTERM) verildi.\n", target_pid);
     }
     else
     {
-        printf("[INFO] Process %d'e SIGTERM sinyali gönderildi.\n", target_pid);
-        // Shared Memory'den kaldırma işlemi monitor thread tarafından yapılacak
-        // IPC ile diğer instance'lara bildirim gönder
-        Message msg;
-        msg.msg_type = 1; // Tüm instance'lara gönder
-        msg.command = STATUS_TERMINATED;
-        msg.sender_pid = getpid();
-        msg.target_pid = target_pid;
-        send_ipc_message(&msg);
+        perror("Process sonlandırma hatası");
     }
 }
 
@@ -444,6 +516,80 @@ void print_running_processes(SharedData *data)
 
 int main(int argc, char const *argv[])
 {
+    // IPC kaynaklarını başlat
+    init_ipc_resources();
+    // Thread'leri başlat
+    pthread_t monitor_thread;
+    pthread_t ipc_thread;
 
+    if (pthread_create(&monitor_thread, NULL, monitor_processes, NULL) != 0)
+    {
+        perror("Monitor thread oluşturulamadı");
+        exit(1);
+    }
+    if (pthread_create(&ipc_thread, NULL, ipc_listener, NULL) != 0)
+    {
+        perror("Listener thread oluşturulamadı");
+        exit(1);
+    }
+
+    // Ana döngü
+    int choice;
+    char command_buffer[256];
+    int mode_choice;
+    pid_t pid_input;
+
+    while (1)
+    {
+        // Menüyü yazdır
+        print_program_output();
+        printf("Seçiminiz: ");
+        if (scanf("%d", &choice) != 1)
+        {
+            // Buffer temizle
+            while (getchar() != '\n')
+                ;
+            continue;
+        }
+        // Buffer'daki newline karakterini temizle
+        while (getchar() != '\n')
+            ;
+        switch (choice)
+        {
+        case 1: // Yeni program çalıştırma
+            printf("Çalıştırılacak komutu girin: ");
+            // fgets ile boşluklu komutları da alabiliriz
+            if (fgets(command_buffer, sizeof(command_buffer), stdin) != NULL)
+            {
+                // Sondaki \n karakterini sil
+                command_buffer[strcspn(command_buffer, "\n")] = 0;
+            }
+
+            printf("Mod seçin (0: Attached, 1: Detached): ");
+            scanf("%d", &mode_choice);
+            while (getchar() != '\n')
+                ; // Temizlik
+
+            create_new_process(command_buffer, (ProcessMode)mode_choice);
+            break;
+
+        case 2: // Çalışan programları listele
+            sem_wait(g_sem);
+            print_running_processes(g_shared_mem);
+            sem_post(g_sem);
+            break;
+        case 3: // Program sonlandır
+            printf("Sonlandırılacak process PID: ");
+            scanf("%d", &pid_input);
+            while (getchar() != '\n')
+                ;
+
+            terminate_process(pid_input);
+            break;
+        case 0: // Çıkış
+            clean_exit();
+            break;
+        }
+    }
     return 0;
 }
