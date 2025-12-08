@@ -244,11 +244,10 @@ void repaint_ui(const char *message);
 void *monitor_processes(void *arg)
 {
     char buffer[256];
-    while (1) // Program çalıştığı sürece
+    while (1)
     {
-        sleep(2); // 2 saniye bekle
+        sleep(2); // 2 saniyede bir kontrol et
 
-        // Shared memory ve semafor hazır değilse atla
         if (g_shared_mem == NULL || g_sem == NULL)
             continue;
 
@@ -257,26 +256,42 @@ void *monitor_processes(void *arg)
         for (int i = 0; i < g_shared_mem->process_count; i++)
         {
             ProcessInfo *proc = &g_shared_mem->processes[i];
-
-            // Sadece kendi başlattıklarımızı kontrol et
-            if (proc->owner_pid != getpid())
-            {
-                continue;
-            }
+            int should_clean = 0; // Silinmeli mi bayrağı
 
             // Sadece aktif olanları kontrol et
             if (proc->is_active)
             {
-                int status;
-                // WNOHANG: Process bitmediyse bekleme yapma, hemen dön (0 döner)
-                pid_t result = waitpid(proc->pid, &status, WNOHANG);
+                // Durum 1: Benim başlattığım süreç (Parent-Child)
+                if (proc->owner_pid == getpid())
+                {
+                    int status;
+                    // WNOHANG: Process bitmediyse bekleme yapma, hemen dön
+                    pid_t result = waitpid(proc->pid, &status, WNOHANG);
 
-                if (result > 0) // Process sonlandı
+                    if (result > 0) // Process sonlandı
+                    {
+                        should_clean = 1;
+                    }
+                }
+                // Durum 2: Başkasının başlattığı süreç (Detached veya Sahibi Ölmüş)
+                else
+                {
+                    // kill(pid, 0) sinyal göndermez, sadece varlığı kontrol eder.
+                    // Eğer -1 dönerse ve errno == ESRCH ise, böyle bir process YOKTUR.
+                    if (kill(proc->pid, 0) == -1 && errno == ESRCH)
+                    {
+                        should_clean = 1; // Process sistemde yok, listeden silmeliyiz
+                    }
+                }
+
+                // Eğer process silinmeli ise
+                if (should_clean)
                 {
                     snprintf(buffer, sizeof(buffer), "[MONITOR] Process %d sonlandı.", proc->pid);
 
                     repaint_ui(buffer);
-                    // IPC Mesajı Gönder (Diğerlerine haber ver)
+
+                    // IPC Mesajı Gönder
                     Message msg;
                     msg.msg_type = 1;
                     msg.command = STATUS_TERMINATED;
@@ -285,19 +300,15 @@ void *monitor_processes(void *arg)
 
                     if (msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0) == -1)
                     {
-                        perror("Monitor msgsnd hatası");
+                        perror("Monitor IPC msgsnd hatası");
                     }
 
-                    // Shared Memory'den sil
+                    // Shared Memory'den sil (Kaydırma Yöntemi)
                     g_shared_mem->processes[i] = g_shared_mem->processes[g_shared_mem->process_count - 1];
                     g_shared_mem->process_count--;
 
-                    // İndeksi düzelt
+                    // İndeksi düzelt (Kaydırdığımız elemanı atlamamak için)
                     i--;
-                }
-                else if (result == -1)
-                {
-                    perror("waitpid hatası");
                 }
             }
         }
