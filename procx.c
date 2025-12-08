@@ -330,6 +330,7 @@ void send_ipc_message(Message *msg)
 // IPC Listener fonksiyonu
 void *ipc_listener(void *arg)
 {
+    (void) arg; // Makefile unused parameter warning go away
     Message msg;
     char buffer[256];
     while (1)
@@ -503,38 +504,46 @@ void terminate_process(pid_t target_pid)
 
 void print_program_output()
 {
-    printf("==============================\n");
-    printf("          ProcX v1.0          \n");
-    printf("==============================\n");
-    printf("1. Yeni Program Çalıştır\n");
-    printf("2. Çalışan Programları Listele\n");
-    printf("3. Program Sonlandır\n");
-    printf("0. Çıkış\n");
-    printf("==============================\n");
+    printf("╔════════════════════════════════════╗\n");
+    printf("║             ProcX v1.0             ║\n");
+    printf("╠════════════════════════════════════╣\n");
+    printf("║ 1. Yeni Program Çalıştır           ║\n");
+    printf("║ 2. Çalışan Programları Listele     ║\n");
+    printf("║ 3. Program Sonlandır               ║\n");
+    printf("║ 0. Çıkış                           ║\n");
+    printf("╚════════════════════════════════════╝\n");
 }
 
 void print_running_processes(SharedData *data)
 {
-    printf("==============================\n");
-    printf("Çalışan Programlar:\n");
-    printf("==============================\n");
-    printf("PID\tKomut\tMod\tDurum\tBaşlangıç Zamanı\n");
-    printf("==============================\n");
+    time_t now = time(NULL);
+    char duration_str[20]; // Süreyi "5s" şeklinde tutmak için geçici alan
+
+    printf("╔═══════╤═════════════════╤══════════╤════════════╤════════════╗\n");
+    printf("║ %-5s │ %-15s │ %-8s │ %-10s │ %-10s  ║\n", 
+           "PID", "Command", "Mode", "Status", "Süre");
+    printf("╠═══════╪═════════════════╪══════════╪════════════╪════════════╣\n");
+
     for (int i = 0; i < data->process_count; i++)
     {
         ProcessInfo *proc = &data->processes[i];
         if (proc->is_active)
         {
+            long elapsed_seconds = (long)difftime(now, proc->start_time);
+
+            // Önce süreyi "5s" formatında bir metne dönüştür
+            snprintf(duration_str, sizeof(duration_str), "%lds", elapsed_seconds);
+
             printf(
-                "%d\t%s\t%s\t%s\t%s",
+                "║ %-5d │ %-15.15s │ %-8s │ %-10s │ %-10s ║\n",
                 proc->pid,
                 proc->command,
                 proc->mode == MODE_ATACHED ? "Attached" : "Detached",
                 proc->status == STATUS_RUNNING ? "Running" : "Terminated",
-                ctime(&proc->start_time));
+                duration_str); // Artık metin olarak (bitişik) yazdırıyoruz
         }
     }
-    printf("==============================\n");
+    printf("╚═══════╧═════════════════╧══════════╧════════════╧════════════╝\n");
 }
 
 // Ekranı temizleyip mesajı ve menüyü yeniden basan fonksiyon
