@@ -161,9 +161,9 @@ void init_ipc_resources()
 
 void disconnect_ipc_resources()
 {
-    if (g_sem != NULL)
+    if (g_shared_mem != NULL)
     {
-        munmap(g_sem, sizeof(SharedData));
+        munmap(g_shared_mem, sizeof(SharedData));
     }
     if (g_sem != NULL)
     {
@@ -176,7 +176,6 @@ void destroy_ipc_resources()
     shm_unlink(SHM_NAME);
     sem_unlink(SEM_NAME);
     msgctl(g_mq_id, IPC_RMID, NULL);
-    printf("[SİSTEM] Tüm kaynaklar (SHM, SEM, MQ) silindi.\n");
 }
 
 void clean_exit()
@@ -210,7 +209,10 @@ void clean_exit()
                     // Mesaj gönderme (msgsnd)
                     if (g_mq_id != -1)
                     {
-                        msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0);
+                        if (msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0) == -1)
+                        {
+                            perror("Exit IPC msgsnd hatası");
+                        }
                     }
                 }
             }
@@ -237,10 +239,11 @@ void clean_exit()
 }
 
 void send_ipc_message(Message *msg);
-
+void repaint_ui(const char *message);
 // Monitor Thread fonksiyonu
 void *monitor_processes(void *arg)
 {
+    char buffer[256];
     while (1) // Program çalıştığı sürece
     {
         sleep(2); // 2 saniye bekle
@@ -255,8 +258,7 @@ void *monitor_processes(void *arg)
         {
             ProcessInfo *proc = &g_shared_mem->processes[i];
 
-            // Eğer başkasının process'i ise atla
-            // Başkasının processini waitpid ile bekleyemeyiz
+            // Sadece kendi başlattıklarımızı kontrol et
             if (proc->owner_pid != getpid())
             {
                 continue;
@@ -271,9 +273,10 @@ void *monitor_processes(void *arg)
 
                 if (result > 0) // Process sonlandı
                 {
-                    printf("[MONITOR] Process %d sonlandı (Temizleniyor...)\n", proc->pid);
+                    snprintf(buffer, sizeof(buffer), "[MONITOR] Process %d sonlandı.", proc->pid);
 
-                    // 1. IPC Mesajı Gönder (Diğerlerine haber ver)
+                    repaint_ui(buffer);
+                    // IPC Mesajı Gönder (Diğerlerine haber ver)
                     Message msg;
                     msg.msg_type = 1;
                     msg.command = STATUS_TERMINATED;
@@ -316,10 +319,15 @@ void send_ipc_message(Message *msg)
 void *ipc_listener(void *arg)
 {
     Message msg;
+    char buffer[256];
     while (1)
     {
         if (msgrcv(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0, 0) == -1)
         {
+            if (errno == EIDRM || errno == EINVAL)
+            {
+                break; // Hata basma, döngüyü kır ve sessizce çık.
+            }
             perror("Mesaj alma hatası");
             continue;
         }
@@ -336,17 +344,21 @@ void *ipc_listener(void *arg)
                 msgsnd(g_mq_id, &msg, sizeof(Message) - sizeof(long), 0);
                 usleep(10000); // 10ms bekle ki diğer terminalin alma şansı olsun
             }
+            continue;
         }
 
         if (msg.command == STATUS_TERMINATED)
         {
-            printf("[IPC] Process sonlandırıldı: PID %d\n", msg.target_pid);
+            snprintf(buffer, sizeof(buffer), "[IPC] Process sonlandırıldı: PID %d", msg.target_pid);
         }
         else if (msg.command == STATUS_CREATED)
         {
-            printf("[IPC] Yeni process başlatıldı: PID %d\n", msg.target_pid);
+            snprintf(buffer, sizeof(buffer), "[IPC] Yeni process başlatıldı: PID %d", msg.target_pid);
         }
+        // Ekranı komple yenile
+        repaint_ui(buffer);
     }
+    return NULL;
 }
 
 #define MAX_ARGS 10 // Bir komut için maksimum argüman sayısı
@@ -514,6 +526,30 @@ void print_running_processes(SharedData *data)
     printf("==============================\n");
 }
 
+// Ekranı temizleyip mesajı ve menüyü yeniden basan fonksiyon
+void repaint_ui(const char *message)
+{
+    // ANSI Escape Code: Ekranı temizle ve imleci sol üst köşeye (Home) al
+    // \033[H : İmleci başa al
+    // \033[J : Ekranı temizle
+    printf("\033[H\033[J");
+
+    // 1. Varsa gelen Bildirimi (IPC/Monitor mesajını) Renkli veya Belirgin Bas
+    if (message != NULL)
+    {
+        printf(">>> %s\n", message); // Mesajı en tepeye basıyoruz
+    }
+
+    // 2. Menüyü Tekrar Bas
+    print_program_output(); // Senin mevcut menü fonksiyonun
+
+    // 3. Prompt'u (İstemciyi) Bas
+    printf("Seçiminiz: ");
+
+    // 4. Çıktıyı Zorla (Buffer'ı boşalt)
+    fflush(stdout);
+}
+
 int main(int argc, char const *argv[])
 {
     // IPC kaynaklarını başlat
@@ -590,6 +626,8 @@ int main(int argc, char const *argv[])
             clean_exit();
             break;
         }
+
+        sleep(1); // UI daha okunabilir olsun
     }
     return 0;
 }
