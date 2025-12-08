@@ -1,18 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <semaphore.h>
-#include <sys/msg.h>
-#include <sys/types.h>
-#include <errno.h>
-#include <time.h>
-#include <signal.h>
-#include <pthread.h>
-#include <sys/wait.h>
+#include <unistd.h>    // fork, execvp, sleep
+#include <fcntl.h>     // O_CREAT, O_EXCL, O_RDWR
+#include <sys/mman.h>  // shm_open, mmap, shm_unlink, munmap
+#include <sys/stat.h>  // 0666
+#include <semaphore.h> // sem_open, sem_wait, sem_post, sem_close, sem_unlink
+#include <sys/msg.h>   // msgget, msgsnd, msgrcv
+#include <sys/types.h> // pid_t, key_t
+#include <errno.h>     // error handling
+#include <time.h>      // time
+#include <signal.h>    // kill, SIGTERM
+#include <pthread.h>   // pthread_create, pthread_join
+#include <sys/wait.h>  // waitpid, WNOHANG
 
 // Enum
 typedef enum
@@ -243,6 +243,7 @@ void repaint_ui(const char *message);
 // Monitor Thread fonksiyonu
 void *monitor_processes(void *arg)
 {
+    (void)arg; // Makefile unused parameter warning go away
     char buffer[256];
     while (1)
     {
@@ -329,6 +330,7 @@ void send_ipc_message(Message *msg)
 // IPC Listener fonksiyonu
 void *ipc_listener(void *arg)
 {
+    (void)arg; // Makefile unused parameter warning go away
     Message msg;
     char buffer[256];
     while (1)
@@ -563,6 +565,8 @@ void repaint_ui(const char *message)
 
 int main(int argc, char const *argv[])
 {
+    (void)argc; // Makefile unused parameter warning go away
+    (void)argv; // Makefile unused parameter warning go away
     // IPC kaynaklarını başlat
     init_ipc_resources();
     // Thread'leri başlat
