@@ -245,6 +245,122 @@ void *ipc_listener(void *arg)
     }
 }
 
+#define MAX_ARGS 10 // Bir komut için maksimum argüman sayısı
+
+// Argümanları ayırır ve bir char* dizisine (argv) doldurur.
+// Döndürülen değer, bulunan argüman sayısıdır.
+int parse_command(char *command, char *argv[])
+{
+    int count = 0;
+    // strtok orijinal string'i değiştirdiği için, burada doğrudan komutun pointer'ını kullanırız.
+    char *token = strtok(command, " \t\n"); // Boşluk ve tab karakterlerine göre ayır
+
+    while (token != NULL && count < MAX_ARGS - 1)
+    {
+        argv[count++] = token;
+        token = strtok(NULL, " \t\n");
+    }
+    argv[count] = NULL; // execvp'nin son argümanı NULL olmalıdır
+    return count;
+}
+
+void create_new_process(char *command, ProcessMode mode)
+{
+    char command_for_tokenize[256];
+    char command_for_save[256];
+    pid_t pid;
+
+    // komutları kopyala
+    strncpy(command_for_tokenize, command, sizeof(command_for_tokenize) - 1);
+    command_for_tokenize[sizeof(command_for_tokenize) - 1] = '\0';
+
+    strncpy(command_for_save, command, sizeof(command_for_save) - 1);
+    command_for_save[sizeof(command_for_save) - 1] = '\0';
+
+    // Yeni process oluştur
+    pid = fork();
+
+    if (pid < 0)
+    {
+        perror("Fork hatası");
+        return;
+    }
+
+    // --- CHILD PROCESS ---
+    else if (pid == 0)
+    {
+
+        char *argv[MAX_ARGS];
+
+        // Komutu tokenize et
+        int arg_count = parse_command(command_for_tokenize, argv);
+
+        if (arg_count == 0)
+        {
+            fprintf(stderr, "HATA: Geçersiz veya boş komut.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if (mode == MODE_DETACHED)
+        {
+            if (setsid() < 0)
+            {
+                perror("setsid hatası");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        // Programı çalıştır (argv[0] komutun kendisidir)
+        execvp(argv[0], argv);
+
+        // Hata durumunda (Komut bulunamazsa)
+        perror("execvp hatası (Komut bulunamadı veya çalıştırılamadı)");
+        exit(EXIT_FAILURE);
+    }
+
+    // --- PARENT PROCESS  ---
+    // Shared Memory'ye process bilgisini ekle
+    sem_wait(g_sem); // Kilidi al
+
+    int max_processes = sizeof(g_shared_mem->processes) / sizeof(g_shared_mem->processes[0]);
+    if (g_shared_mem->process_count >= max_processes)
+    {
+        fprintf(stderr, "HATA: Shared memory dolu (Maksimum %lu sürece ulaşıldı).\n", max_processes);
+        sem_post(g_sem); // Kilidi aç
+        return;
+    }
+
+    // Process Bilgisini Doldurma
+    ProcessInfo *new_proc = &g_shared_mem->processes[g_shared_mem->process_count];
+
+    new_proc->pid = pid;
+    new_proc->owner_pid = getpid();
+    new_proc->mode = mode;
+    new_proc->status = 0; // Running
+
+    // Kaydedilen orijinal komutu kopyala
+    strncpy(new_proc->command, command_for_save, sizeof(new_proc->command) - 1);
+    new_proc->command[sizeof(new_proc->command) - 1] = '\0';
+
+    new_proc->start_time = time(NULL);
+    new_proc->is_active = 1;
+
+    g_shared_mem->process_count++;
+
+    sem_post(g_sem); // Kilidi bırak
+
+    // 4. IPC Bildirimi Gönder
+    Message ipc_msg;
+    ipc_msg.msg_type = 1;
+    ipc_msg.command = STATUS_CREATED;
+    ipc_msg.sender_pid = getpid();
+    ipc_msg.target_pid = pid;
+    send_ipc_message(&ipc_msg);
+
+    printf("[SUCCESS] Process başlatıldı: PID %d (Mod: %s)\n", pid,
+           (mode == MODE_DETACHED ? "Detached" : "Attached"));
+}
+
 void print_program_output()
 {
     printf("==============================\n");
