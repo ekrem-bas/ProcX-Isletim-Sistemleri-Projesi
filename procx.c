@@ -131,6 +131,42 @@ void init_ipc_resources()
     }
 }
 
+// IPC Kaynaklarını temizleme fonksiyonu
+void cleanup_ipc_resources()
+{
+    // Semaforu kapat
+    if (g_sem != NULL)
+    {
+        sem_close(g_sem);
+        sem_unlink(SEM_NAME);
+        if (g_sem == SEM_FAILED)
+        {
+            perror("Semafor kapatma hatası");
+        }
+    }
+
+    // Shared memory'yi kapat
+    if (g_shared_mem != NULL)
+    {
+        munmap(g_shared_mem, sizeof(SharedData));
+        shm_unlink(SHM_NAME);
+        if (g_shared_mem == MAP_FAILED)
+        {
+            perror("Shared memory kapatma hatası");
+        }
+    }
+
+    // Message queue'yu sil
+    if (g_mq_id != -1)
+    {
+        msgctl(g_mq_id, IPC_RMID, NULL);
+        if (msgctl(g_mq_id, IPC_RMID, NULL) == -1)
+        {
+            perror("Message queue silme hatası");
+        }
+    }
+}
+
 void print_program_output()
 {
     printf("==============================\n");
