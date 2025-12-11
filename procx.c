@@ -14,6 +14,12 @@
 #include <pthread.h>   // pthread_create, pthread_join
 #include <sys/wait.h>  // waitpid, WNOHANG
 
+#define SHM_NAME "/procx_shm"
+#define SEM_NAME "/procx_sem"
+#define IPC_KEY_FILE "/tmp/procx_ipc_key"
+#define MAX_PROCESSES 50
+#define MAX_ARGS 10 // Bir komut için maksimum argüman sayısı
+
 // Enum
 typedef enum
 {
@@ -42,9 +48,9 @@ typedef struct
 
 typedef struct
 {
-    ProcessInfo processes[50]; // Maksimum 50 process
-    int process_count;         // Aktif process sayısı
-    int instance_count;        // Aktif ProcX instance sayısı
+    ProcessInfo processes[MAX_PROCESSES]; // Maksimum 50 process
+    int process_count;                    // Aktif process sayısı
+    int instance_count;                   // Aktif ProcX instance sayısı
 } SharedData;
 
 typedef struct
@@ -55,13 +61,25 @@ typedef struct
     pid_t target_pid; // Hedef process PID
 } Message;
 
-#define SHM_NAME "/procx_shm"
-#define SEM_NAME "/procx_sem"
-#define IPC_KEY_FILE "/tmp/procx_ipc_key"
 // GLOBAL DEĞİŞKENLER
 SharedData *g_shared_mem = NULL; // Shared memory pointer'ı
 sem_t *g_sem = NULL;             // Semafor pointer'ı
 int g_mq_id = -1;                // Mesaj kuyruğu ID'si
+
+// Fonksiyon prototipleri
+void init_ipc_resources();
+void disconnect_ipc_resources();
+void destroy_ipc_resources();
+void clean_exit();
+void *monitor_processes(void *arg);
+void *ipc_listener(void *arg);
+void send_ipc_message(Message *msg);
+int parse_command(char *command, char *argv[]);
+void create_new_process(char *command, ProcessMode mode);
+void terminate_process(pid_t target_pid);
+void print_program_output();
+void print_running_processes(SharedData *data);
+void repaint_ui(const char *message);
 
 // IPC kaynaklarını oluşturma fonksiyonu (mesaj kuyruğu, paylaşılan bellek, semafor)
 void init_ipc_resources()
@@ -97,6 +115,12 @@ void init_ipc_resources()
         {
             // Zaten var, normal aç
             shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+            // Hata kontrolü
+            if (shm_fd == -1)
+            {
+                perror("Shared memory açma hatası");
+                exit(1);
+            }
         }
         else
         {
@@ -108,6 +132,9 @@ void init_ipc_resources()
     // Belleği ilgili pointer'a eşle
     g_shared_mem = (SharedData *)mmap(NULL, sizeof(SharedData),
                                       PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+
+    // Map ettikten sonra dosyayı kapat
+    close(shm_fd);
     if (g_shared_mem == MAP_FAILED)
     {
         perror("mmap hatası");
@@ -159,6 +186,7 @@ void init_ipc_resources()
     sem_post(g_sem);
 }
 
+// IPC kaynaklarından bağlantıyı kesme fonksiyonu
 void disconnect_ipc_resources()
 {
     if (g_shared_mem != NULL)
@@ -171,6 +199,7 @@ void disconnect_ipc_resources()
     }
 }
 
+// Son instance için IPC kaynaklarını yok etme fonksiyonu
 void destroy_ipc_resources()
 {
     shm_unlink(SHM_NAME);
@@ -178,7 +207,7 @@ void destroy_ipc_resources()
     msgctl(g_mq_id, IPC_RMID, NULL);
 }
 
-void send_ipc_message(Message *msg);
+// Instance için çıkış fonksiyonu
 void clean_exit()
 {
     // Kendi başlattığımız Attached Process'leri öldür ve bildir
@@ -232,11 +261,9 @@ void clean_exit()
             disconnect_ipc_resources(); // Değilsen sadece bağlantını kes
         }
     }
-
     exit(0);
 }
 
-void repaint_ui(const char *message);
 // Monitor Thread fonksiyonu
 void *monitor_processes(void *arg)
 {
@@ -327,10 +354,11 @@ void send_ipc_message(Message *msg)
         }
     }
 }
+
 // IPC Listener fonksiyonu
 void *ipc_listener(void *arg)
 {
-    (void) arg; // Makefile unused parameter warning go away
+    (void)arg; // Makefile unused parameter warning go away
     Message msg;
     char buffer[256];
     while (1)
@@ -373,8 +401,6 @@ void *ipc_listener(void *arg)
     return NULL;
 }
 
-#define MAX_ARGS 10 // Bir komut için maksimum argüman sayısı
-
 // Argümanları ayırır ve bir char* dizisine (argv) doldurur.
 // Döndürülen değer, bulunan argüman sayısıdır.
 int parse_command(char *command, char *argv[])
@@ -391,6 +417,7 @@ int parse_command(char *command, char *argv[])
     return count;
 }
 
+// Yeni process oluşturma fonksiyonu
 void create_new_process(char *command, ProcessMode mode)
 {
     char command_for_tokenize[256];
@@ -416,7 +443,6 @@ void create_new_process(char *command, ProcessMode mode)
     // --- CHILD PROCESS ---
     else if (pid == 0)
     {
-
         char *argv[MAX_ARGS];
 
         // Komutu tokenize et
@@ -446,6 +472,20 @@ void create_new_process(char *command, ProcessMode mode)
     }
 
     // --- PARENT PROCESS  ---
+
+    // Önce child process oluştu mu oluşmadı mı kontrol et
+    usleep(1000); // Kısa bir bekleme
+
+    int status;
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result < 0)
+    {
+        // Child process hemen sonlandı, demek ki execvp başarısız oldu
+        // Shared memory'e ekleme yapma
+        fprintf(stderr, "HATA: Process başlatılamadı. Komut hatası veya bulunamadı.\n");
+        return;
+    }
+
     // Shared Memory'ye process bilgisini ekle
     sem_wait(g_sem); // Kilidi al
 
@@ -502,6 +542,7 @@ void terminate_process(pid_t target_pid)
     }
 }
 
+// UI Menüsü Basma Fonksiyonu
 void print_program_output()
 {
     printf("╔════════════════════════════════════╗\n");
@@ -514,13 +555,14 @@ void print_program_output()
     printf("╚════════════════════════════════════╝\n");
 }
 
+// Çalışan processleri listeleme fonksiyonu
 void print_running_processes(SharedData *data)
 {
     time_t now = time(NULL);
     char duration_str[20]; // Süreyi "5s" şeklinde tutmak için geçici alan
 
     printf("╔═══════╤═════════════════╤══════════╤════════════╤════════════╗\n");
-    printf("║ %-5s │ %-15s │ %-8s │ %-10s │ %-10s  ║\n", 
+    printf("║ %-5s │ %-15s │ %-8s │ %-10s │ %-10s  ║\n",
            "PID", "Command", "Mode", "Status", "Süre");
     printf("╠═══════╪═════════════════╪══════════╪════════════╪════════════╣\n");
 
