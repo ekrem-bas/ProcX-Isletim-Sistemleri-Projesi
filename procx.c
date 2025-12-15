@@ -13,6 +13,7 @@
 #include <signal.h>    // kill, SIGTERM
 #include <pthread.h>   // pthread_create, pthread_join
 #include <sys/wait.h>  // waitpid, WNOHANG
+#include <fcntl.h>     // pipe, open
 
 #define SHM_NAME "/procx_shm"
 #define SEM_NAME "/procx_sem"
@@ -263,7 +264,7 @@ void clean_exit()
             disconnect_ipc_resources(); // Değilsen sadece bağlantını kes
         }
     }
-    
+
     exit(0);
 }
 
@@ -498,12 +499,34 @@ void create_new_process(char *command, ProcessMode mode)
     strncpy(command_for_save, command, sizeof(command_for_save) - 1);
     command_for_save[sizeof(command_for_save) - 1] = '\0';
 
+    // Yeni process oluşturmadan önce parent ve child arasında bir pipe oluştur
+    // Eğer child process hemen sonlanırsa (execvp başarısız olursa) parent bunu anlayabilir
+    int pipe_fd[2];
+    if (pipe(pipe_fd) == -1)
+    {
+        perror("Pipe oluşturulamadı");
+        return;
+    }
+
+    // Yazma ucunu kapatırken close-on-exec bayrağını ayarla
+    // Bu sayede eğer execvp başarılı olursa pipe kapanır
+    if (fcntl(pipe_fd[1], F_SETFD, FD_CLOEXEC) == -1)
+    {
+        perror("fcntl hatası");
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        return;
+    }
+    
     // Yeni process oluştur
     pid = fork();
 
     if (pid < 0)
     {
         perror("Fork hatası");
+        // Pipe'ı kapat
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
         return;
     }
 
@@ -512,12 +535,17 @@ void create_new_process(char *command, ProcessMode mode)
     {
         char *argv[MAX_ARGS];
 
+        // Pipe'ın okuma ucunu kapat
+        close(pipe_fd[0]);
+
         // Komutu tokenize et
         int arg_count = parse_command(command_for_tokenize, argv);
 
         if (arg_count == 0)
         {
-            fprintf(stderr, "HATA: Geçersiz veya boş komut.\n");
+            // Hata durumunda pipe'a yaz
+            int err = ENOENT;
+            write(pipe_fd[1], &err, sizeof(err));
             exit(EXIT_FAILURE);
         }
 
@@ -525,13 +553,22 @@ void create_new_process(char *command, ProcessMode mode)
         {
             if (setsid() < 0)
             {
-                perror("setsid hatası");
+                // Hata durumunda pipe'a yaz
+                int err = errno;
+                write(pipe_fd[1], &err, sizeof(err));
                 exit(EXIT_FAILURE);
             }
         }
 
         // Programı çalıştır (argv[0] komutun kendisidir)
         execvp(argv[0], argv);
+
+        // Buraya gelindiyse execvp başarısız olmuştur
+        int err = errno;
+        write(pipe_fd[1], &err, sizeof(err)); // Parent'a hata kodunu yaz
+        
+        // Pipe'ın yazma ucunu kapat
+        close(pipe_fd[1]);
 
         // Hata durumunda (Komut bulunamazsa)
         perror("execvp hatası (Komut bulunamadı veya çalıştırılamadı)");
@@ -540,9 +577,30 @@ void create_new_process(char *command, ProcessMode mode)
 
     // --- PARENT PROCESS  ---
 
-    // Önce child process oluştu mu oluşmadı mı kontrol et
-    usleep(1000); // Kısa bir bekleme
+    // Pipe'ın yazma ucunu kapat
+    close(pipe_fd[1]);
 
+    // Child process'ten hata kodunu oku
+    int child_err;
+    ssize_t n = read(pipe_fd[0], &child_err, sizeof(child_err));
+
+    // Pipe'ın okuma ucunu kapat
+    close(pipe_fd[0]);
+
+    // Eğer read 0 döndüyse, child process execvp ile başarılı bir şekilde değişti
+    if (n > 0)
+    {
+        // Pipe'tan veri geldi, demek ki execvp başarısız oldu
+        fprintf(stderr, "HATA: Process başlatılamadı. Komut hatası veya bulunamadı. (Hata Kodu: %d)\n", child_err);
+
+        // Zombi process oluşmaması için waitpid çağır
+        waitpid(pid, NULL, 0);
+        return;
+    }
+
+    // Buraya gelindiyse child process execvp ile başarılı bir şekilde değişti
+    // Process ID'si pid değişkeninde
+    // Hemen waitpid ile kontrol et (WNOHANG ile non-blocking)
     int status;
     pid_t result = waitpid(pid, &status, WNOHANG);
     if (result < 0)
