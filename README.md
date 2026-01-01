@@ -1,36 +1,36 @@
-# ProcX - Process Yönetim Sistemi
+# ProcX - Process Management System
 
-**ProcX**, Unix/Linux ve macOS sistemlerinde çalışan, birden fazla terminal üzerinden süreç (process) yönetimi yapabilen bir C uygulamasıdır. Paylaşımlı bellek (Shared Memory), semaforlar ve mesaj kuyrukları gibi IPC (Inter-Process Communication) mekanizmalarını kullanarak terminaller arası senkronizasyon sağlar.
+**ProcX** is a C application running on Unix/Linux and macOS systems that can manage processes across multiple terminals. It uses IPC (Inter-Process Communication) mechanisms such as shared memory, semaphores, and message queues to provide synchronization between terminals.
 
-## 📋 İçindekiler
+## 📋 Contents
 
-- [Özellikler](#-özellikler)
-- [Gereksinimler](#-gereksinimler)
-- [Derleme](#-derleme)
-- [Kullanım](#-kullanım)
-- [Mimari](#-mimari)
-- [Veri Yapıları](#-veri-yapıları)
-- [Fonksiyonlar](#-fonksiyonlar)
-- [IPC Mekanizmaları](#-ipc-mekanizmaları)
-- [Thread Yapısı](#-thread-yapısı)
-
----
-
-## ✨ Özellikler
-
-- **Çoklu Terminal Desteği**: Birden fazla ProcX instance'ı aynı anda çalışabilir
-- **Attached/Detached Modları**: Process'ler bağlı veya bağımsız modda başlatılabilir
-- **Gerçek Zamanlı İzleme**: Arka plan thread'i ile process durumları sürekli izlenir
-- **IPC Bildirimleri**: Terminaller arası anlık bildirim sistemi
-- **Otomatik Temizlik**: Uygulama kapanırken attached process'ler otomatik sonlandırılır
+- [Features](#-features)
+- [Requirements](#-requirements)
+- [Build](#-build)
+- [Usage](#-usage)
+- [Architecture](#-architecture)
+- [Data Structures](#-data-structures)
+- [Functions](#-functions)
+- [IPC Mechanisms](#-ipc-mechanisms)
+- [Thread Structure](#-thread-structure)
 
 ---
 
-## 📦 Gereksinimler
+## ✨ Features
 
-- **İşletim Sistemi**: macOS, Linux veya Unix-benzeri sistem
-- **Derleyici**: GCC veya Clang (C11 desteği)
-- **Kütüphaneler**:
+- **Multi-Terminal Support**: Multiple ProcX instances can run concurrently
+- **Attached/Detached Modes**: Processes can be started in attached or detached mode
+- **Real-Time Monitoring**: Continuous process state monitoring via a background thread
+- **IPC Notifications**: Instant notification system between terminals
+- **Automatic Cleanup**: Attached processes are automatically terminated when the application exits
+
+---
+
+## 📦 Requirements
+
+- **Operating System**: macOS, Linux, or other Unix-like systems
+- **Compiler**: GCC or Clang (C11 support)
+- **Libraries**:
   - POSIX Threads (`pthread`)
   - POSIX Shared Memory (`shm_open`, `mmap`)
   - POSIX Semaphores (`sem_open`)
@@ -38,15 +38,15 @@
 
 ---
 
-## 🔧 Derleme
+## 🔧 Build
 
-Projeyi derlemek için `make` komutunu kullanabilirsiniz:
+You can build the project with the `make` command:
 
 ```bash
 make
 ```
 
-Manuel derleme:
+Manual build:
 
 ```bash
 gcc -o procx procx.c -lpthread -Wall -Wextra
@@ -54,53 +54,53 @@ gcc -o procx procx.c -lpthread -Wall -Wextra
 
 ---
 
-## 🚀 Kullanım
+## 🚀 Usage
 
-### Programı Başlatma
+### Starting the Program
 
 ```bash
 ./procx
 ```
 
-### Menü Seçenekleri
+### Menu Options
 
 ```
 ╔════════════════════════════════════╗
 ║             ProcX v1.0             ║
 ╠════════════════════════════════════╣
-║ 1. Yeni Program Çalıştır           ║
-║ 2. Çalışan Programları Listele     ║
-║ 3. Program Sonlandır               ║
-║ 0. Çıkış                           ║
+║ 1. Run New Program                 ║
+║ 2. List Running Programs           ║
+║ 3. Terminate Program               ║
+║ 0. Exit                            ║
 ╚════════════════════════════════════╝
 ```
 
-### Process Modları
+### Process Modes
 
-| Mod | Açıklama |
-|-----|----------|
-| **Attached (0)** | ProcX kapandığında process de sonlandırılır |
-| **Detached (1)** | ProcX kapansa bile process çalışmaya devam eder |
+| Mode | Description |
+|------|-------------|
+| **Attached (0)** | Process is terminated when ProcX exits |
+| **Detached (1)** | Process continues running even if ProcX exits |
 
-### Örnek Kullanım
+### Example Usage
 
 ```bash
-# Yeni bir sleep komutu başlat (Attached mod)
-Seçiminiz: 1
-Çalıştırılacak komutu girin: sleep 100
-Mod seçin (0: Attached, 1: Detached): 0
+# Start a new sleep command (Attached mode)
+Your choice: 1
+Enter the command to run: sleep 100
+Choose mode (0: Attached, 1: Detached): 0
 
-# Çalışan process'leri listele
-Seçiminiz: 2
+# List running processes
+Your choice: 2
 
-# Belirli bir process'i sonlandır
-Seçiminiz: 3
-Sonlandırılacak process PID: 12345
+# Terminate a specific process
+Your choice: 3
+PID to terminate: 12345
 ```
 
 ---
 
-## 🏗 Mimari
+## 🏗 Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -116,7 +116,7 @@ Sonlandırılacak process PID: 12345
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    IPC Kaynakları                           │
+│                    IPC Resources                            │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │   Shared    │  │  Semaphore  │  │   Message Queue     │  │
@@ -128,223 +128,223 @@ Sonlandırılacak process PID: 12345
 
 ---
 
-## 📊 Veri Yapıları
+## 📊 Data Structures
 
 ### ProcessMode (Enum)
 
-Process'in çalışma modunu tanımlar.
+Defines the running mode of a process.
 
 ```c
 typedef enum {
-    MODE_ATACHED = 0,   // Bağlı mod - ProcX ile birlikte sonlanır
-    MODE_DETACHED = 1   // Bağımsız mod - ProcX kapansa da devam eder
+    MODE_ATACHED = 0,   // Attached mode - terminates with ProcX
+    MODE_DETACHED = 1   // Detached mode - continues after ProcX exits
 } ProcessMode;
 ```
 
 ### ProcessStatus (Enum)
 
-Process'in mevcut durumunu tanımlar.
+Defines the current status of a process.
 
 ```c
 typedef enum {
-    STATUS_RUNNING = 0,     // Çalışıyor
-    STATUS_TERMINATED = 1,  // Sonlandırıldı
-    STATUS_CREATED = 2      // Yeni oluşturuldu
+    STATUS_RUNNING = 0,     // Running
+    STATUS_TERMINATED = 1,  // Terminated
+    STATUS_CREATED = 2      // Newly created
 } ProcessStatus;
 ```
 
 ### ProcessInfo (Struct)
 
-Tek bir process hakkındaki tüm bilgileri tutar.
+Holds all information about a single process.
 
 ```c
 typedef struct {
     pid_t pid;            // Process ID
-    pid_t owner_pid;      // Başlatan ProcX instance'ının PID'si
-    char command[256];    // Çalıştırılan komut
-    ProcessMode mode;     // Attached veya Detached
-    ProcessStatus status; // Çalışma durumu
-    time_t start_time;    // Başlangıç zamanı
-    int is_active;        // Aktiflik durumu (1: aktif, 0: pasif)
+    pid_t owner_pid;      // PID of the ProcX instance that started it
+    char command[256];    // The executed command
+    ProcessMode mode;     // Attached or Detached
+    ProcessStatus status; // Execution status
+    time_t start_time;    // Start time
+    int is_active;        // Active flag (1: active, 0: inactive)
 } ProcessInfo;
 ```
 
-| Alan | Tip | Açıklama |
-|------|-----|----------|
-| `pid` | `pid_t` | İşletim sistemi tarafından atanan process ID |
-| `owner_pid` | `pid_t` | Bu process'i başlatan ProcX instance'ının PID'si |
-| `command` | `char[256]` | Kullanıcının girdiği komut (örn: "sleep 100") |
-| `mode` | `ProcessMode` | Attached veya Detached çalışma modu |
-| `status` | `ProcessStatus` | Running, Terminated veya Created |
-| `start_time` | `time_t` | Process'in başlatıldığı Unix timestamp |
-| `is_active` | `int` | Process'in aktif olup olmadığını belirten bayrak |
+| Field | Type | Description |
+|-------|------|-------------|
+| `pid` | `pid_t` | Process ID assigned by the OS |
+| `owner_pid` | `pid_t` | PID of the ProcX instance that started this process |
+| `command` | `char[256]` | User-entered command (e.g., "sleep 100") |
+| `mode` | `ProcessMode` | Attached or Detached run mode |
+| `status` | `ProcessStatus` | Running, Terminated, or Created |
+| `start_time` | `time_t` | Unix timestamp when the process started |
+| `is_active` | `int` | Flag indicating whether the process is active |
 
 ### SharedData (Struct)
 
-Tüm ProcX instance'ları arasında paylaşılan ana veri yapısı.
+Main data structure shared among all ProcX instances.
 
 ```c
 typedef struct {
-    ProcessInfo processes[50];  // Maksimum 50 process bilgisi
-    int process_count;          // Aktif process sayısı
-    int instance_count;         // Çalışan ProcX instance sayısı
+    ProcessInfo processes[50];  // Maximum 50 process entries
+    int process_count;          // Number of active processes
+    int instance_count;         // Number of running ProcX instances
 } SharedData;
 ```
 
-| Alan | Tip | Açıklama |
-|------|-----|----------|
-| `processes` | `ProcessInfo[50]` | Process bilgilerini tutan dizi |
-| `process_count` | `int` | Dizideki aktif process sayısı |
-| `instance_count` | `int` | Sistemde çalışan ProcX sayısı |
+| Field | Type | Description |
+|-------|------|-------------|
+| `processes` | `ProcessInfo[50]` | Array storing process information |
+| `process_count` | `int` | Number of active processes in the array |
+| `instance_count` | `int` | Number of ProcX instances in the system |
 
 ### Message (Struct)
 
-IPC mesaj kuyruğu için mesaj yapısı.
+Message structure for the IPC message queue.
 
 ```c
 typedef struct {
-    long msg_type;      // Mesaj tipi (System V requirement)
-    int command;        // Komut tipi (STATUS_CREATED, STATUS_TERMINATED)
-    pid_t sender_pid;   // Mesajı gönderen ProcX'in PID'si
-    pid_t target_pid;   // İlgili process'in PID'si
+    long msg_type;      // Required for System V message queues
+    int command;        // Command type (STATUS_CREATED, STATUS_TERMINATED)
+    pid_t sender_pid;   // PID of the ProcX sending the message
+    pid_t target_pid;   // PID of the related process
 } Message;
 ```
 
-| Alan | Tip | Açıklama |
-|------|-----|----------|
-| `msg_type` | `long` | System V mesaj kuyruğu için zorunlu alan |
-| `command` | `int` | Mesajın türü (oluşturma/sonlandırma bildirimi) |
-| `sender_pid` | `pid_t` | Mesajı gönderen instance |
-| `target_pid` | `pid_t` | Mesajın ilgili olduğu process |
+| Field | Type | Description |
+|-------|------|-------------|
+| `msg_type` | `long` | Required field for System V message queues |
+| `command` | `int` | Type of the message (creation/termination notification) |
+| `sender_pid` | `pid_t` | Instance that sent the message |
+| `target_pid` | `pid_t` | Process the message refers to |
 
 ---
 
-## 🔧 Fonksiyonlar
+## 🔧 Functions
 
-### IPC Kaynak Yönetimi
+### IPC Resource Management
 
 #### `init_ipc_resources()`
 
-IPC kaynaklarını (shared memory, semaphore, message queue) başlatır.
+Initializes IPC resources (shared memory, semaphore, message queue).
 
 ```c
 void init_ipc_resources();
 ```
 
-**İşlevi:**
-1. Shared memory segmenti oluşturur veya mevcut olana bağlanır
-2. İlk instance ise belleği sıfırlar
-3. Semafor oluşturur/bağlanır
-4. Message queue için key dosyası oluşturur
-5. Message queue'yu başlatır
-6. Instance sayacını artırır
+Purpose:
+1. Create or attach to the shared memory segment
+2. If first instance, initialize the memory to zeros
+3. Create/attach the semaphore
+4. Create key file for the message queue
+5. Initialize the message queue
+6. Increment the instance counter
 
-**Kullanılan Sistem Çağrıları:**
+System calls used:
 - `shm_open()` - POSIX shared memory
-- `ftruncate()` - Bellek boyutu ayarlama
-- `mmap()` - Bellek eşleme
+- `ftruncate()` - adjust memory size
+- `mmap()` - memory mapping
 - `sem_open()` - POSIX semaphore
-- `ftok()` - IPC key oluşturma
-- `msgget()` - Message queue oluşturma
+- `ftok()` - create IPC key
+- `msgget()` - create message queue
 
 ---
 
 #### `disconnect_ipc_resources()`
 
-IPC kaynaklarından bağlantıyı keser (silmez).
+Detaches from IPC resources (does not remove them).
 
 ```c
 void disconnect_ipc_resources();
 ```
 
-**İşlevi:**
-- `munmap()` ile shared memory bağlantısını keser
-- `sem_close()` ile semaforu kapatır
+Purpose:
+- Use `munmap()` to unmap shared memory
+- Use `sem_close()` to close the semaphore
 
 ---
 
 #### `destroy_ipc_resources()`
 
-IPC kaynaklarını sistemden tamamen siler.
+Completely removes IPC resources from the system.
 
 ```c
 void destroy_ipc_resources();
 ```
 
-**İşlevi:**
-- `shm_unlink()` ile shared memory'yi siler
-- `sem_unlink()` ile semaforu siler
-- `msgctl()` ile message queue'yu siler
+Purpose:
+- Delete shared memory with `shm_unlink()`
+- Delete semaphore with `sem_unlink()`
+- Remove message queue with `msgctl()`
 
-> ⚠️ **Not:** Bu fonksiyon yalnızca son instance kapanırken çağrılır.
+> ⚠️ Note: This function is only called when the last instance exits.
 
 ---
 
-### Process Yönetimi
+### Process Management
 
 #### `create_new_process()`
 
-Yeni bir child process oluşturur.
+Creates a new child process.
 
 ```c
 void create_new_process(char *command, ProcessMode mode);
 ```
 
-**Parametreler:**
-| Parametre | Tip | Açıklama |
-|-----------|-----|----------|
-| `command` | `char*` | Çalıştırılacak komut |
-| `mode` | `ProcessMode` | Attached veya Detached |
+Parameters:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `command` | `char*` | Command to execute |
+| `mode` | `ProcessMode` | Attached or Detached |
 
-**İşlevi:**
-1. `fork()` ile yeni process oluşturur
-2. Child process'te:
-   - Komutu tokenize eder
-   - Detached modda `setsid()` çağırır
-   - `execvp()` ile programı çalıştırır
-3. Parent process'te:
-   - Shared memory'ye process bilgisini ekler
-   - Diğer instance'lara IPC bildirimi gönderir
+Behavior:
+1. `fork()` to create a new process
+2. In the child:
+   - Tokenize the command
+   - Call `setsid()` in detached mode
+   - `execvp()` to run the program
+3. In the parent:
+   - Add process info to shared memory
+   - Send IPC notifications to other instances
 
 ---
 
 #### `terminate_process()`
 
-Belirtilen PID'ye sahip process'i sonlandırır.
+Terminates the process with the specified PID.
 
 ```c
 void terminate_process(pid_t target_pid);
 ```
 
-**Parametreler:**
-| Parametre | Tip | Açıklama |
-|-----------|-----|----------|
-| `target_pid` | `pid_t` | Sonlandırılacak process'in ID'si |
+Parameters:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `target_pid` | `pid_t` | PID of the process to terminate |
 
-**İşlevi:**
-- `kill(target_pid, SIGTERM)` ile process'e sonlandırma sinyali gönderir
+Behavior:
+- Send termination signal using `kill(target_pid, SIGTERM)`
 
 ---
 
 #### `parse_command()`
 
-Komut string'ini argüman dizisine ayırır.
+Splits a command string into an argument array.
 
 ```c
 int parse_command(char *command, char *argv[]);
 ```
 
-**Parametreler:**
-| Parametre | Tip | Açıklama |
-|-----------|-----|----------|
-| `command` | `char*` | Ayrıştırılacak komut string'i |
-| `argv` | `char*[]` | Argümanların yazılacağı dizi |
+Parameters:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `command` | `char*` | Command string to parse |
+| `argv` | `char*[]` | Array to write arguments into |
 
-**Dönüş Değeri:** Bulunan argüman sayısı
+Return value: number of arguments found
 
-**Örnek:**
+Example:
 ```c
-// "ls -la /tmp" komutu için:
+// For "ls -la /tmp":
 // argv[0] = "ls"
 // argv[1] = "-la"
 // argv[2] = "/tmp"
@@ -353,71 +353,71 @@ int parse_command(char *command, char *argv[]);
 
 ---
 
-### IPC İletişimi
+### IPC Communication
 
 #### `send_ipc_message()`
 
-Tüm ProcX instance'larına mesaj gönderir.
+Sends a message to all ProcX instances.
 
 ```c
 void send_ipc_message(Message *msg);
 ```
 
-**Parametreler:**
-| Parametre | Tip | Açıklama |
-|-----------|-----|----------|
-| `msg` | `Message*` | Gönderilecek mesaj yapısı |
+Parameters:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `msg` | `Message*` | Message structure to send |
 
-**İşlevi:**
-- Instance sayısı kadar mesaj kopyası gönderir
-- Her instance kendi kopyasını alır
+Behavior:
+- Sends a copy of the message for each instance
+- Each instance receives its own copy
 
 ---
 
-### Thread Fonksiyonları
+### Thread Functions
 
 #### `monitor_processes()`
 
-Arka planda çalışan process izleme thread'i.
+Background thread that monitors processes.
 
 ```c
 void *monitor_processes(void *arg);
 ```
 
-**İşlevi:**
-1. 2 saniyede bir tüm process'leri kontrol eder
-2. Kendi başlattığı process'ler için `waitpid(WNOHANG)` kullanır
-3. Başkasının process'leri için `kill(pid, 0)` ile varlık kontrolü yapar
-4. Sonlanan process'leri shared memory'den kaldırır
-5. IPC bildirimi gönderir
+Behavior:
+1. Checks all processes every 2 seconds
+2. Uses `waitpid(WNOHANG)` for processes it started
+3. Uses `kill(pid, 0)` to check existence of others' processes
+4. Removes terminated processes from shared memory
+5. Sends IPC notifications for terminated processes
 
-**Kullanılan Teknikler:**
-- `waitpid(pid, &status, WNOHANG)`: Non-blocking bekleme
-- `kill(pid, 0)`: Process varlık kontrolü (sinyal göndermez)
+Techniques used:
+- `waitpid(pid, &status, WNOHANG)`: non-blocking wait
+- `kill(pid, 0)`: existence check (does not send a signal)
 
 ---
 
 #### `ipc_listener()`
 
-IPC mesajlarını dinleyen thread.
+Thread that listens for IPC messages.
 
 ```c
 void *ipc_listener(void *arg);
 ```
 
-**İşlevi:**
-1. Message queue'dan mesaj bekler (`msgrcv`)
-2. Kendi gönderdiği mesajları yoksayar
-3. Diğer instance'lardan gelen bildirimleri ekrana basar
-4. Açgözlülük önleme için `usleep()` kullanır
+Behavior:
+1. Waits for messages from the message queue (`msgrcv`)
+2. Ignores messages it sent itself
+3. Prints notifications from other instances to the screen
+4. Uses `usleep()` to prevent busy-waiting
 
 ---
 
-### Kullanıcı Arayüzü
+### User Interface
 
 #### `print_program_output()`
 
-Ana menüyü ekrana basar.
+Prints the main menu to the screen.
 
 ```c
 void print_program_output();
@@ -427,16 +427,16 @@ void print_program_output();
 
 #### `print_running_processes()`
 
-Çalışan process'leri tablo formatında listeler.
+Lists running processes in a table format.
 
 ```c
 void print_running_processes(SharedData *data);
 ```
 
-**Çıktı Formatı:**
+Output format:
 ```
 ╔═══════╤═════════════════╤══════════╤════════════╤════════════╗
-║ PID   │ Command         │ Mode     │ Status     │ Süre       ║
+║ PID   │ Command         │ Mode     │ Status     │ Duration   ║
 ╠═══════╪═════════════════╪══════════╪════════════╪════════════╣
 ║ 12345 │ sleep           │ Attached │ Running    │ 45s        ║
 ╚═══════╧═════════════════╧══════════╧════════════╧════════════╝
@@ -446,89 +446,87 @@ void print_running_processes(SharedData *data);
 
 #### `repaint_ui()`
 
-Ekranı temizleyip UI'ı yeniden çizer.
+Clears the screen and redraws the UI.
 
 ```c
 void repaint_ui(const char *message);
 ```
 
-**Parametreler:**
-| Parametre | Tip | Açıklama |
-|-----------|-----|----------|
-| `message` | `const char*` | Gösterilecek bildirim (NULL olabilir) |
+Parameters:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `message` | `const char*` | Notification to display (can be NULL) |
 
-**İşlevi:**
-1. ANSI escape kodları ile ekranı temizler
-2. Varsa bildirimi gösterir
-3. Menüyü yeniden basar
-4. `fflush(stdout)` ile buffer'ı temizler
+Behavior:
+1. Clears the screen using ANSI escape codes
+2. Displays the notification if provided
+3. Redraws the menu
+4. Calls `fflush(stdout)` to flush the buffer
 
 ---
 
 #### `clean_exit()`
 
-Programdan güvenli çıkış yapar.
+Performs a safe program exit.
 
 ```c
 void clean_exit();
 ```
 
-**İşlevi:**
-1. Attached process'leri sonlandırır
-2. Sonlandırılan process'ler için IPC bildirimi gönderir
-3. Instance sayacını azaltır
-4. Son instance ise kaynakları yok eder
-5. Değilse sadece bağlantıyı keser
+Behavior:
+1. Terminates attached processes
+2. Sends IPC notifications for terminated processes
+3. Decrements the instance counter
+4. If this is the last instance, destroys resources
+5. Otherwise, just disconnects from resources
 
 ---
 
-## 🔗 IPC Mekanizmaları
+## 🔗 IPC Mechanisms
 
 ### Shared Memory (POSIX)
 
-| Öğe | Değer | Açıklama |
-|-----|-------|----------|
-| **İsim** | `/procx_shm` | POSIX shared memory adı |
-| **Boyut** | `sizeof(SharedData)` | ~2.5 KB |
-| **İzinler** | `0666` | Tüm kullanıcılar okuyabilir/yazabilir |
+| Item | Value | Description |
+|------|-------|-------------|
+| **Name** | `/procx_shm` | POSIX shared memory name |
+| **Size** | `sizeof(SharedData)` | ~2.5 KB |
+| **Permissions** | `0666` | Read/write for all users |
 
-**Kullanım Amacı:** Tüm instance'ların process listesini paylaşması
+Purpose: Share the process list among all instances
 
 ### Semaphore (POSIX)
 
-| Öğe | Değer | Açıklama |
-|-----|-------|----------|
-| **İsim** | `/procx_sem` | POSIX semaphore adı |
-| **Başlangıç Değeri** | `1` | Binary semaphore (mutex) |
+| Item | Value | Description |
+|------|-------|-------------|
+| **Name** | `/procx_sem` | POSIX semaphore name |
+| **Initial Value** | `1` | Binary semaphore (mutex) |
 
-**Kullanım Amacı:** Shared memory'ye eşzamanlı erişimi engellemek
+Purpose: Prevent concurrent access to shared memory
 
 ### Message Queue (System V)
 
-| Öğe | Değer | Açıklama |
-|-----|-------|----------|
-| **Key Dosyası** | `/tmp/procx_ipc_key` | ftok için dosya |
-| **Proje ID** | `65` | ftok için ID |
+| Item | Value | Description |
+|------|-------|-------------|
+| **Key File** | `/tmp/procx_ipc_key` | File for `ftok` |
+| **Project ID** | `65` | ID for `ftok` |
 
-**Kullanım Amacı:** Instance'lar arası anlık bildirim
-
----
-
-## 🧵 Thread Yapısı
-
-| Thread | Fonksiyon | Görevi |
-|--------|-----------|--------|
-| **Main Thread** | `main()` | Kullanıcı arayüzü ve girdi işleme |
-| **Monitor Thread** | `monitor_processes()` | Process durumlarını izleme |
-| **IPC Listener** | `ipc_listener()` | Diğer instance'lardan gelen mesajları dinleme |
+Purpose: Instant notifications between instances
 
 ---
 
-## ⚠️ Bilinen Sınırlamalar
+## 🧵 Thread Structure
 
-1. **Maksimum Process Sayısı:** 50
-2. **Maksimum Komut Uzunluğu:** 255 karakter
-3. **Maksimum Argüman Sayısı:** 10
-4. **Platform:** POSIX uyumlu sistemler (macOS, Linux)
+| Thread | Function | Role |
+|--------|----------|------|
+| **Main Thread** | `main()` | User interface and input handling |
+| **Monitor Thread** | `monitor_processes()` | Monitor process states |
+| **IPC Listener** | `ipc_listener()` | Listen for messages from other instances |
 
 ---
+
+## ⚠️ Known Limitations
+
+1. **Maximum Process Count:** 50
+2. **Maximum Command Length:** 255 characters
+3. **Maximum Argument Count:** 10
+4. **Platform:** POSIX-compliant systems (macOS, Linux)
